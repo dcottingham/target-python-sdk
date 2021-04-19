@@ -7,7 +7,7 @@
 # the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
 # OF ANY KIND, either express or implied. See the License for the specific language
 # governing permissions and limitations under the License.
-"""Test cases for taraget_decisioning_engine.geo_provider module"""
+"""Test cases for target_decisioning_engine.geo_provider module"""
 try:
     from unittest.mock import patch
 except ImportError:
