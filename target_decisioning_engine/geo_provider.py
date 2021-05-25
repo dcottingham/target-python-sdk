@@ -11,6 +11,13 @@
 # pylint: disable=broad-except
 # pylint: disable=too-few-public-methods
 try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+    from trollius import From # TODO - add to requirements.txt
+import six
+
+try:
     from functools import reduce
 except ImportError:
     pass
@@ -19,13 +26,13 @@ try:
 except ImportError:
     from Queue import Queue
 import json
-from threading import Thread
 from copy import deepcopy
 import urllib3
 from delivery_api_client import Geo
 from target_tools.logger import get_logger
 from target_tools.utils import noop
 from target_tools.utils import parse_float
+from target_tools.async_execution import execute_async, yield_from
 from target_decisioning_engine.constants import HTTP_GET
 from target_decisioning_engine.constants import OK
 from target_decisioning_engine.events import GEO_LOCATION_UPDATED
@@ -135,21 +142,18 @@ class GeoProvider:
         self.geo_targeting_enabled = artifact.get("geoTargetingEnabled", False)
         self.event_emitter = config.event_emitter or noop
 
-    def _execute_request(self, geo_lookup_path, headers, queue):
+    @asyncio.coroutine
+    def _execute_request(self, geo_lookup_path, headers):
         """Sends http request for geo data"""
-        response = self.pool_manager.request(HTTP_GET, geo_lookup_path, headers=headers)
-        queue.put(response)
+        return self.pool_manager.request(HTTP_GET, geo_lookup_path, headers=headers) # TODO - yield from instead of return? TEST w/out mock
 
+    @asyncio.coroutine
     def _request_geo(self, geo_lookup_path, headers):
         """Executes geo request in a new thread"""
-        result = Queue()
-        request_thread = Thread(target=self._execute_request,
-                                name="GeoProvider.request",
-                                args=[geo_lookup_path, headers, result])
-        request_thread.start()
-        request_thread.join()
-        return result.get()
+        _args = [geo_lookup_path, headers]
+        return execute_async(self._execute_request, args=_args)
 
+    @asyncio.coroutine
     def valid_geo_request_context(self, geo_request_context=None):
         """
         :param geo_request_context: (delivery_api_client.Model.geo.Geo) geo object
@@ -170,7 +174,7 @@ class GeoProvider:
                 headers[HTTP_HEADER_FORWARDED_FOR] = geo_request_context.ip_address
 
             try:
-                response = self._request_geo(geo_lookup_path, headers)
+                response = yield from self._request_geo(geo_lookup_path, headers) # TODO - yield from Py2.7
                 return self.geo_response_handler(response, validated_geo_request_context)
             except Exception as err:
                 self.logger.error("Exception while fetching geo data at: {} - error: {}".format(geo_lookup_path,

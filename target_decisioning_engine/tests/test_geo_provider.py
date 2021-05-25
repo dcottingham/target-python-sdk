@@ -12,6 +12,11 @@ try:
     from unittest.mock import patch
 except ImportError:
     from mock import patch
+try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+    from trollius import From # TODO - add to requirements.txt
 import time
 import json
 import os
@@ -109,6 +114,9 @@ class TestGeoProvider(unittest.TestCase):
             self.assertEqual(mock_http_call.call_count, 0)
 
     def test_valid_geo_request_context_geo_targeting_enabled_and_valid_ip_address(self):
+        coroutine_validation = {
+            "called": False
+        }
         expected = Geo(**{
             "city": "SAN FRANCISCO",
             "country_code": "US",
@@ -121,16 +129,25 @@ class TestGeoProvider(unittest.TestCase):
         artifact["geoTargetingEnabled"] = True
         geo_provider = GeoProvider(self.config, artifact)
 
-        with patch.object(geo_provider.pool_manager, "request", return_value=self.mock_geo_response) as mock_http_call:
-            geo_input = Geo(ip_address="12.21.1.40")
-            result = geo_provider.valid_geo_request_context(geo_input)
-
-            time.sleep(1)
-
+        @asyncio.coroutine
+        def validate_result(_geo_input):
+            coroutine_validation["called"] = True
+            result = yield from geo_provider.valid_geo_request_context(_geo_input) # TODO - yield from, Py 2.7
             self.assertEqual(result, expected)
             self.assertEqual(mock_http_call.call_count, 1)
             self.assertEqual(mock_http_call.call_args[0][1], "https://assets.adobetarget.com/v1/geo")
             self.assertEqual(mock_http_call.call_args[1].get("headers").get(HTTP_HEADER_FORWARDED_FOR), "12.21.1.40")
+
+        with patch.object(geo_provider.pool_manager, "request", return_value=self.mock_geo_response) as mock_http_call:
+            geo_input = Geo(ip_address="12.21.1.40")
+
+            task = asyncio.ensure_future(validate_result(geo_input))
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(task)
+            loop.close()
+
+            self.assertTrue(coroutine_validation.get("called"))
+
 
     def test_valid_geo_request_context_no_ip_address(self):
         expected = Geo(**{
